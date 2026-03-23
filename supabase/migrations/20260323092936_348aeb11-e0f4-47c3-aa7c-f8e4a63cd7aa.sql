@@ -1,0 +1,1 @@
+ALTER TABLE public.stories ADD CONSTRAINT stories_user_id_fkey_profiles FOREIGN KEY (user_id) REFERENCES public.profiles(user_id);
