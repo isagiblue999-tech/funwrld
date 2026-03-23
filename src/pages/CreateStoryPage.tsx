@@ -1,14 +1,23 @@
 import { useState } from "react";
-import { Plus, Image, Film, Type, GripVertical, Trash2, Eye, Send } from "lucide-react";
+import { Plus, Image, Film, Type, GripVertical, Trash2, Eye, Send, Loader2, Save } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { uploadStoryMedia } from "@/lib/storage";
+import { useToast } from "@/hooks/use-toast";
 
 type Block = {
   id: string;
   type: "text" | "image" | "video";
   content: string;
+  file?: File;
+  uploading?: boolean;
 };
 
 let blockIdCounter = 0;
 const newId = () => `block-${++blockIdCounter}`;
+
+const CATEGORIES = ["Fantasy", "Adventure", "Romance", "Horror", "Sci-Fi", "Mystery"];
 
 const CreateStoryPage = () => {
   const [title, setTitle] = useState("");
@@ -17,6 +26,15 @@ const CreateStoryPage = () => {
     { id: newId(), type: "text", content: "" },
   ]);
   const [preview, setPreview] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  if (!user) {
+    navigate("/auth");
+    return null;
+  }
 
   const addBlock = (type: Block["type"]) => {
     setBlocks([...blocks, { id: newId(), type, content: "" }]);
@@ -31,13 +49,77 @@ const CreateStoryPage = () => {
     setBlocks(blocks.filter((b) => b.id !== id));
   };
 
-  const handleMediaUpload = (id: string, file: File) => {
-    // In production, upload to cloud storage. For now, use local URL.
-    const url = URL.createObjectURL(file);
-    updateBlock(id, url);
+  const handleMediaUpload = async (id: string, file: File) => {
+    // Validate video duration
+    if (file.type.startsWith("video/")) {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      const url = URL.createObjectURL(file);
+      video.src = url;
+      await new Promise((r) => (video.onloadedmetadata = r));
+      URL.revokeObjectURL(url);
+      if (video.duration > 20) {
+        toast({ title: "Video too long", description: "Max 20 seconds allowed.", variant: "destructive" });
+        return;
+      }
+    }
+
+    // Show local preview immediately
+    const localUrl = URL.createObjectURL(file);
+    setBlocks(blocks.map((b) => (b.id === id ? { ...b, content: localUrl, file } : b)));
   };
 
-  const CATEGORIES = ["Fantasy", "Adventure", "Romance", "Horror", "Sci-Fi", "Mystery"];
+  const publish = async (asDraft: boolean) => {
+    if (!title.trim()) {
+      toast({ title: "Title required", description: "Give your story a title.", variant: "destructive" });
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      // Upload all media files first
+      const uploadedBlocks = await Promise.all(
+        blocks.map(async (block, index) => {
+          if (block.file) {
+            const url = await uploadStoryMedia(user.id, block.file);
+            return { type: block.type, content: url, sort_order: index };
+          }
+          return { type: block.type, content: block.content, sort_order: index };
+        })
+      );
+
+      // Create story
+      const { data: story, error: storyError } = await supabase
+        .from("stories")
+        .insert({ title, category, published: !asDraft, user_id: user.id })
+        .select("id")
+        .single();
+
+      if (storyError) throw storyError;
+
+      // Insert blocks
+      const { error: blocksError } = await supabase
+        .from("story_blocks")
+        .insert(
+          uploadedBlocks.map((b) => ({
+            story_id: story.id,
+            type: b.type,
+            content: b.content,
+            sort_order: b.sort_order,
+          }))
+        );
+
+      if (blocksError) throw blocksError;
+
+      toast({ title: asDraft ? "Draft saved!" : "Story published!" });
+      navigate(`/story/${story.id}`);
+    } catch (err: any) {
+      toast({ title: "Error saving story", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (preview) {
     return (
@@ -59,20 +141,9 @@ const CreateStoryPage = () => {
                 <p className="whitespace-pre-wrap leading-relaxed">{block.content || "..."}</p>
               ) : block.content ? (
                 block.type === "video" ? (
-                  <video
-                    src={block.content}
-                    controls
-                    className="w-full rounded-lg"
-                    style={{ maxHeight: 400 }}
-                  />
+                  <video src={block.content} controls className="w-full rounded-lg" style={{ maxHeight: 400 }} />
                 ) : (
-                  <img
-                    src={block.content}
-                    alt=""
-                    className="w-full rounded-lg object-contain"
-                    loading="lazy"
-                    style={{ maxHeight: 500 }}
-                  />
+                  <img src={block.content} alt="" className="w-full rounded-lg object-contain" loading="lazy" style={{ maxHeight: 500 }} />
                 )
               ) : (
                 <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-border bg-secondary/30 text-sm text-muted-foreground">
@@ -110,9 +181,8 @@ const CreateStoryPage = () => {
         </select>
       </div>
 
-      {/* Blocks */}
       <div className="space-y-4 animate-reveal animate-reveal-delay-1">
-        {blocks.map((block, index) => (
+        {blocks.map((block) => (
           <div
             key={block.id}
             className="group relative rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/20"
@@ -150,7 +220,7 @@ const CreateStoryPage = () => {
                       <img src={block.content} alt="" className="w-full rounded-lg object-contain" style={{ maxHeight: 300 }} />
                     )}
                     <button
-                      onClick={() => updateBlock(block.id, "")}
+                      onClick={() => { setBlocks(blocks.map((b) => b.id === block.id ? { ...b, content: "", file: undefined } : b)); }}
                       className="absolute right-2 top-2 rounded-full bg-background/80 p-1.5 text-foreground backdrop-blur-sm hover:bg-destructive hover:text-destructive-foreground transition-colors"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -186,29 +256,18 @@ const CreateStoryPage = () => {
         ))}
       </div>
 
-      {/* Add block buttons */}
       <div className="mt-4 flex flex-wrap gap-2 animate-reveal animate-reveal-delay-2">
-        <button
-          onClick={() => addBlock("text")}
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]"
-        >
+        <button onClick={() => addBlock("text")} className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]">
           <Type className="h-4 w-4" /> Text
         </button>
-        <button
-          onClick={() => addBlock("image")}
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]"
-        >
+        <button onClick={() => addBlock("image")} className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]">
           <Image className="h-4 w-4" /> Image / GIF
         </button>
-        <button
-          onClick={() => addBlock("video")}
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]"
-        >
+        <button onClick={() => addBlock("video")} className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground active:scale-[0.97]">
           <Film className="h-4 w-4" /> Video
         </button>
       </div>
 
-      {/* Actions */}
       <div className="mt-8 flex gap-3">
         <button
           onClick={() => setPreview(true)}
@@ -216,8 +275,19 @@ const CreateStoryPage = () => {
         >
           <Eye className="h-4 w-4" /> Preview
         </button>
-        <button className="flex items-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-all duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-lg shadow-primary/20">
-          <Send className="h-4 w-4" /> Publish
+        <button
+          onClick={() => publish(true)}
+          disabled={saving}
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-4 py-2.5 text-sm font-medium transition-colors hover:bg-secondary/80 active:scale-[0.97] disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Draft
+        </button>
+        <button
+          onClick={() => publish(false)}
+          disabled={saving}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-all duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-lg shadow-primary/20 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Publish
         </button>
       </div>
     </div>

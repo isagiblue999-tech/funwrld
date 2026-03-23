@@ -1,19 +1,69 @@
-import { Link } from "react-router-dom";
-import { PenLine, BookOpen, Search, Plus } from "lucide-react";
-import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { PenLine, BookOpen, Search, Plus, Trash2, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { formatDistanceToNow } from "date-fns";
 
-const MOCK_STORIES = [
-  { id: "1", title: "The Ember Crown", category: "Fantasy", updatedAt: "2 hours ago", published: true },
-  { id: "2", title: "Moonlit Passage", category: "Adventure", updatedAt: "1 day ago", published: false },
-  { id: "3", title: "The Last Familiar", category: "Fantasy", updatedAt: "3 days ago", published: true },
-];
+type Story = {
+  id: string;
+  title: string;
+  category: string;
+  published: boolean;
+  updated_at: string;
+};
 
 const DashboardPage = () => {
   const [search, setSearch] = useState("");
+  const [stories, setStories] = useState<Story[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const filtered = MOCK_STORIES.filter((s) =>
+  useEffect(() => {
+    if (!user) { navigate("/auth"); return; }
+    fetchStories();
+  }, [user]);
+
+  const fetchStories = async () => {
+    const { data, error } = await supabase
+      .from("stories")
+      .select("id, title, category, published, updated_at")
+      .eq("user_id", user!.id)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      toast({ title: "Error loading stories", description: error.message, variant: "destructive" });
+    } else {
+      setStories(data || []);
+    }
+    setLoading(false);
+  };
+
+  const deleteStory = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const { error } = await supabase.from("stories").delete().eq("id", id);
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } else {
+      setStories((s) => s.filter((st) => st.id !== id));
+    }
+  };
+
+  const filtered = stories.filter((s) =>
     s.title.toLowerCase().includes(search.toLowerCase())
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
@@ -28,7 +78,6 @@ const DashboardPage = () => {
         </Link>
       </div>
 
-      {/* Search */}
       <div className="relative mb-6 animate-reveal animate-reveal-delay-1">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -40,7 +89,6 @@ const DashboardPage = () => {
         />
       </div>
 
-      {/* Story list */}
       <div className="space-y-3 animate-reveal animate-reveal-delay-2">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
@@ -66,18 +114,26 @@ const DashboardPage = () => {
                 <h3 className="font-serif font-semibold">{story.title}</h3>
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="rounded-full bg-secondary px-2 py-0.5">{story.category}</span>
-                  <span>Updated {story.updatedAt}</span>
+                  <span>Updated {formatDistanceToNow(new Date(story.updated_at), { addSuffix: true })}</span>
                 </div>
               </div>
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  story.published
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-secondary text-muted-foreground"
-                }`}
-              >
-                {story.published ? "Published" : "Draft"}
-              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    story.published
+                      ? "bg-emerald-500/10 text-emerald-400"
+                      : "bg-secondary text-muted-foreground"
+                  }`}
+                >
+                  {story.published ? "Published" : "Draft"}
+                </span>
+                <button
+                  onClick={(e) => deleteStory(story.id, e)}
+                  className="rounded p-1.5 text-muted-foreground transition-colors hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             </Link>
           ))
         )}
