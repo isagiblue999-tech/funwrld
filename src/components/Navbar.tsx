@@ -1,8 +1,10 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, Home, PenLine, User, LogIn, Search } from "lucide-react";
+import { BookOpen, Home, PenLine, User, LogIn, LogOut } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 const Navbar = () => {
   const location = useLocation();
+  const { user } = useAuth();
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -39,13 +41,23 @@ const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <Link
-            to="/auth"
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 active:scale-[0.97]"
-          >
-            <LogIn className="h-4 w-4" />
-            <span className="hidden sm:inline">Sign In</span>
-          </Link>
+          {user ? (
+            <Link
+              to="/profile"
+              className="flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-sm font-medium text-foreground transition-colors duration-150 hover:bg-secondary/80 active:scale-[0.97]"
+            >
+              <User className="h-4 w-4" />
+              <span className="hidden sm:inline">Profile</span>
+            </Link>
+          ) : (
+            <Link
+              to="/auth"
+              className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 active:scale-[0.97]"
+            >
+              <LogIn className="h-4 w-4" />
+              <span className="hidden sm:inline">Sign In</span>
+            </Link>
+          )}
         </div>
       </div>
 
